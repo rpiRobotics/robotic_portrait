@@ -5,6 +5,7 @@ import glob, sys, time
 from scipy.interpolate import CubicSpline
 from general_robotics_toolbox import *
 from abb_robot_client.egm import EGM
+import abb_motion_program_exec as abb
 from copy import deepcopy
 from pathlib import Path
 
@@ -31,7 +32,7 @@ def adjoint_map(T):
 
 class MotionController(object):
     def __init__(self,robot,ipad_pose,H_pentip2ati,controller_param,TIMESTEP,USE_RR_ROBOT=True,
-                 RR_robot_sub=None,FORCE_PROTECTION=5,RR_ati_cli=None,simulation=False):
+                 RR_robot_sub=None,FORCE_PROTECTION=5,RR_ati_cli=None,simulation=False,abb_robot_ip=''):
         
         # define robots
         self.robot=robot
@@ -76,6 +77,7 @@ class MotionController(object):
                 time.sleep(0.1)
                 self.connect_position_mode()
             else: # use EGM else
+                self.client = abb.MotionProgramExecClient(base_url="http://"+abb_robot_ip+":80")
                 self.egm = EGM()
   
         self.TIMESTEP = TIMESTEP # egm timestep 4 ms, ur5 10 ms
@@ -109,6 +111,16 @@ class MotionController(object):
             self.cmd_w.SetOutValueAll(joint_cmd)
         else:
             self.egm.send_to_robot(np.degrees(q))
+
+    def start_egm(self):
+        mm = abb.egm_minmax(-1e-3,1e-3)
+        egm_config = abb.EGMJointTargetConfig(mm,mm,mm,mm,mm,mm,1000,1000)
+        mp = abb.MotionProgram(egm_config=egm_config)
+        mp.EGMRunJoint(10,0.05,0.05)
+        lognum = self.client.execute_motion_program(mp,wait=False)
+
+    def stop_egm(self):
+        self.client.stop_egm()
     
     def read_position(self):
         if self.USE_RR_ROBOT:

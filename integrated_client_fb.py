@@ -73,6 +73,7 @@ RR_ati_cli=None
 if FORCE_FEEDBACK:
     RR_ati_cli=RRN.ConnectService('rr+tcp://localhost:59823?service=ati_sensor') # connect to ATI sensor
 #########################################################config parameters#########################################################
+abb_robot_ip = '192.168.60.101'
 paper_size=np.loadtxt('config/paper_size.csv',delimiter=',') # size of the paper
 pixel2mm=np.loadtxt('config/pixel2mm.csv',delimiter=',') # pixel to mm ratio
 pixel2force=np.loadtxt('config/pixel2force.csv',delimiter=',') # pixel to force ratio
@@ -111,7 +112,7 @@ controller_params = {
     }
 ### Define the motion controller
 mctrl=MotionController(robot,ipad_pose,H_pentip2ati,controller_params,TIMESTEP,USE_RR_ROBOT=USE_RR_ROBOT,
-                 RR_robot_sub=RR_robot_sub,FORCE_PROTECTION=5,RR_ati_cli=RR_ati_cli)
+                 RR_robot_sub=RR_robot_sub,FORCE_PROTECTION=5,RR_ati_cli=RR_ati_cli,abb_robot_ip=abb_robot_ip)
 
 ###### Face tracking RR client ######
 def connect_failed(s, client_id, url, err):
@@ -138,11 +139,12 @@ PIXEL_PLAN = True
 CART_PLAN = True
 JS_PLAN = True
 
-INITIAL_LOGO_PLAN=False
+INITIAL_LOGO_PLAN=True
 
 img_names = ['alex','brandon','eric','glenn','julia','molly','thea','wen']
 img_count = 0
 
+mctrl.start_egm()
 q_init = mctrl.read_position()
 #########################################################EXECUTION#########################################################
 while True:

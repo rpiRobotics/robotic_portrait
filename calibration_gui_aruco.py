@@ -3,11 +3,13 @@ from RobotRaconteur.Client import *
 import sys, os, time, argparse, traceback
 from tkinter import *
 from tkinter import messagebox
+import threading
 from qpsolvers import solve_qp
 import numpy as np
 from importlib import import_module
 sys.path.append('toolbox')
-from vel_emulate_sub import EmulatedVelocityControl
+import abb_motion_program_exec as abb
+from abb_robot_client.egm import EGM
 from robot_def import *
 from general_robotics_toolbox import *    
 from sklearn.decomposition import PCA
@@ -36,62 +38,44 @@ name_dict={'ABB':'ABB_1200_5_90','ur':'ur5'}
 #load robot class
 robot_kin=robot_obj(name_dict[args.robot_name],'config/'+name_dict[args.robot_name]+'_robot_default_config.yml',tool_file_path='config/'+args.tool_file+'.csv')
     
+def start_egm():
+    global client
+    mm = abb.egm_minmax(-1e-3,1e-3)
+    egm_config = abb.EGMJointTargetConfig(mm,mm,mm,mm,mm,mm,1000,1000)
+    mp = abb.MotionProgram(egm_config=egm_config)
+    mp.EGMRunJoint(10,0.05,0.05)
+    lognum = client.execute_motion_program(mp,wait=False)
 
-#auto discovery for robot service
-time.sleep(2)
-res=RRN.FindServiceByType("com.robotraconteur.robotics.robot.Robot",
-["rr+local","rr+tcp","rrs+tcp"])
-url=None
-for serviceinfo2 in res:
-    if args.robot_name in serviceinfo2.NodeName:
-        url=serviceinfo2.ConnectionURL
-        break
-if url==None:
-    print('service not found')
-    sys.exit()
+def stop_egm():
+    global client
+    client.stop_egm()
 
-#auto discovery for robot tool service
-res=RRN.FindServiceByType("com.robotraconteur.robotics.tool.Tool",
-["rr+local","rr+tcp","rrs+tcp"])
-url_gripper=None
-for serviceinfo2 in res:
-    if args.robot_name in serviceinfo2.NodeName:
-        url_gripper=serviceinfo2.ConnectionURL
-        break
-if url_gripper==None:
-    print('gripper service not found')
-else:
-    #connect
-    try:
-        tool=RRN.ConnectService(url_gripper)
-    except:
-        traceback.print_exc()
+def position_cmd(q):
+    global egm
+    egm.send_to_robot(np.degrees(q))
 
-#connect robot services
-robot_sub=RRN.SubscribeService(url)
-robot=robot_sub.GetDefaultClientWait(1)
-state_w = robot_sub.SubscribeWire("robot_state")
-#get params of robots
-num_joints=len(robot.robot_info.joint_info)
-P=np.array(robot.robot_info.chains[0].P.tolist())
-length=np.linalg.norm(P[1])+np.linalg.norm(P[2])+np.linalg.norm(P[3])
-H=np.transpose(np.array(robot.robot_info.chains[0].H.tolist()))
+def read_position():
+    global egm
+    res, state = egm.receive_from_robot(timeout=0.1)
+    if not res:
+        raise Exception("Robot communication lost")
+    return np.radians(state.joint_angles)
+        
+TIMESTEP = 0.004
 
+client = abb.MotionProgramExecClient(base_url="http://192.168.60.101:80")
+
+egm = EGM()
+stop_egm()
+start_egm()
 
 ##########Initialize robot constants
-robot_const = RRN.GetConstants("com.robotraconteur.robotics.robot", robot)
-state_flags_enum = robot_const['RobotStateFlags']
-halt_mode = robot_const["RobotCommandMode"]["halt"]
-position_mode = robot_const["RobotCommandMode"]["position_command"]
-robot.command_mode = halt_mode
-time.sleep(0.1)
-robot.command_mode = position_mode
-cmd_w = robot_sub.SubscribeWire("position_command")
-
-vel_ctrl = EmulatedVelocityControl(robot,state_w, cmd_w)
-#enable velocity mode
-vel_ctrl.enable_velocity_mode()
-
+robot=robot_obj(name_dict[args.robot_name],'config/ABB_1200_5_90_robot_default_config.yml',tool_file_path='config/heh6_pen.csv')
+#get params of robots
+P=robot.robot.P.T
+length=np.linalg.norm(P[1])+np.linalg.norm(P[2])+np.linalg.norm(P[3])
+H=robot.robot.H.T
+num_joints=len(H)
 
 ###### for aruco tag calibration ####
 robot_cam = robot_obj(name_dict[args.robot_name],'config/'+name_dict[args.robot_name]+'_robot_default_config.yml',tool_file_path='config/camera.csv')
@@ -104,75 +88,84 @@ aruco_pipe = None
 top=Tk()
 top.title(args.robot_name)
 jobid = None
-def gripper_ctrl(tool):
 
-    if gripper.config('relief')[-1] == 'sunken':
-        tool.open()
-        gripper.config(relief="raised")
-        gripper.configure(bg='red')
-        gripper.configure(text='gripper off')
+FLAG_ROBOT_MOVE = False
 
-    else:
-        tool.close()
-        gripper.config(relief="sunken")
-        gripper.configure(bg='green')
-        gripper.configure(text='gripper on')
+def movej_work(qdot):
+    global jobid, FLAG_ROBOT_MOVE
+
+    K=2
+    FLAG_ROBOT_MOVE = True
+    while FLAG_ROBOT_MOVE:
+        if np.max(np.abs(speed.get()*qdot))>1.0:
+            qdot=np.zeros(6)
+            print('too fast')
+
+        this_qdot = speed.get()*qdot*K
+        
+        this_q = read_position()
+        position_cmd(this_q+this_qdot*TIMESTEP)
     return
 
 def movej(qdot):
-    global jobid
+    t1 = threading.Thread(target=movej_work, args=(qdot,))
+    t1.daemon = True
+    t1.start()
 
-    if np.max(np.abs(speed.get()*qdot))>1.0:
-        qdot=np.zeros(6)
-        print('too fast')
+def move_work(vd, ER):
+    global jobid, robot_kin, FLAG_ROBOT_MOVE
 
-    vel_ctrl.set_velocity_command(speed.get()*qdot)
-    jobid = top.after(10, lambda: movej(qdot))
+    K=5
+
+    FLAG_ROBOT_MOVE = True
+    while FLAG_ROBOT_MOVE:
+        try:
+            w=1.
+            Kq=.01*np.eye(6)    #small value to make sure positive definite
+            KR=np.eye(3)        #gains for position and orientation error
+
+            q_cur=read_position()
+            J=robot_kin.jacobian(q_cur)       #calculate current Jacobian
+            Jp=J[3:,:]
+            JR=J[:3,:] 
+            H=np.dot(np.transpose(Jp),Jp)+Kq+w*np.dot(np.transpose(JR),JR)
+
+            H=(H+np.transpose(H))/2
+
+
+            k,theta = R2rot(ER)
+            k=np.array(k)
+            s=np.sin(theta/2)*k         #eR2
+            wd=-np.dot(KR,s)  
+            f=-np.dot(np.transpose(Jp),vd)-w*np.dot(np.transpose(JR),wd)
+            ###Don't put bound here, will affect cartesian motion outcome
+            qdot=speed.get()*solve_qp(H, f)*K
+            ###For safty, make sure robot not moving too fast
+            if np.max(np.abs(qdot))>1.0:
+                qdot=np.zeros(6)
+                print('too fast')
+            
+            position_cmd(q_cur+qdot*TIMESTEP)
+        except:
+            traceback.print_exc()
     return
 
 def move(vd, ER):
-    global jobid, vel_ctrl, robot_kin
-    try:
-        w=1.
-        Kq=.01*np.eye(6)    #small value to make sure positive definite
-        KR=np.eye(3)        #gains for position and orientation error
-
-        q_cur=vel_ctrl.joint_position()
-        J=robot_kin.jacobian(q_cur)       #calculate current Jacobian
-        Jp=J[3:,:]
-        JR=J[:3,:] 
-        H=np.dot(np.transpose(Jp),Jp)+Kq+w*np.dot(np.transpose(JR),JR)
-
-        H=(H+np.transpose(H))/2
-
-
-        k,theta = R2rot(ER)
-        k=np.array(k)
-        s=np.sin(theta/2)*k         #eR2
-        wd=-np.dot(KR,s)  
-        f=-np.dot(np.transpose(Jp),vd)-w*np.dot(np.transpose(JR),wd)
-        ###Don't put bound here, will affect cartesian motion outcome
-        qdot=speed.get()*solve_qp(H, f)
-        ###For safty, make sure robot not moving too fast
-        if np.max(np.abs(qdot))>1.0:
-            qdot=np.zeros(6)
-            print('too fast')
-        vel_ctrl.set_velocity_command(qdot)
-
-        jobid = top.after(10, lambda: move(vd, ER))
-    except:
-        traceback.print_exc()
-    return
+    t1 = threading.Thread(target=move_work, args=(vd, ER))
+    t1.daemon = True
+    t1.start()
 
 def stop():
-    global jobid,vel_ctrl
-    top.after_cancel(jobid)
-    vel_ctrl.set_velocity_command(np.zeros((6,)))
+    global jobid, FLAG_ROBOT_MOVE
+    FLAG_ROBOT_MOVE = False
+    this_q=read_position()
+    position_cmd(this_q)
     return
 
 def save_p(filename):
-    global vel_ctrl, robot_kin, p_all
-    p_all.append(robot_kin.fwd(vel_ctrl.joint_position()).p)
+    global robot_kin, p_all
+    this_q = read_position()
+    p_all.append(robot_kin.fwd(this_q).p)
     if len(p_all)==4:
         p_all=np.array(p_all)
         #identify the center point and the plane
@@ -182,7 +175,7 @@ def save_p(filename):
         R_temp = pca.components_.T		###decreasing variance order
         if R_temp[:,0]@center<0:		###correct orientation
             R_temp[:,0]=-R_temp[:,0]
-        if R_temp[:,-1]@robot_kin.fwd(vel_ctrl.joint_position()).R[:,2]>0:
+        if R_temp[:,-1]@robot_kin.fwd(this_q).R[:,2]>0:
             R_temp[:,-1]=-R_temp[:,-1]
         
         R_temp[:,1]=np.cross(R_temp[:,2],R_temp[:,0])
@@ -245,18 +238,17 @@ def clear_p():
 ##RR part
 def update_label():
     global p_all
-    robot_state=state_w.TryGetInValue()
     flags_text = "Robot State Flags:\n\n"
-    if robot_state[0]:
-        for flag_name, flag_code in state_flags_enum.items():
-            if flag_code & robot_state[1].robot_state_flags != 0:
-                flags_text += flag_name + "\n"
-    else:
-        flags_text += 'service not running'
+    # if robot_state[0]:
+    #     for flag_name, flag_code in state_flags_enum.items():
+    #         if flag_code & robot_state[1].robot_state_flags != 0:
+    #             flags_text += flag_name + "\n"
+    # else:
+    #     flags_text += 'service not running'
         
     joint_text = "Robot Joint Positions:\n\n"
-    for j in robot_state[1].joint_position:
-        joint_text += "%.2f\n" % np.rad2deg(j)
+    # for j in robot_state[1].joint_position:
+    #     joint_text += "%.2f\n" % np.rad2deg(j)
 
     point_text = "Robot Saved Position:\n\n"
     for p in p_all:
@@ -307,10 +299,6 @@ j5_n=Button(top,text='j5_n')
 j5_p=Button(top,text='j5_p')
 j6_n=Button(top,text='j6_n')
 j6_p=Button(top,text='j6_p')
-
-
-
-gripper=Button(top,text='gripper off',command=lambda: gripper_ctrl(tool),bg='red')
 
 save.bind('<ButtonPress-1>', lambda event: save_p(args.save_file))
 clear.bind('<ButtonPress-1>', lambda event: clear_p())
@@ -370,9 +358,6 @@ j5_p.bind('<ButtonRelease-1>', lambda event: stop())
 j6_n.bind('<ButtonRelease-1>', lambda event: stop())
 j6_p.bind('<ButtonRelease-1>', lambda event: stop())
 
-
-
-gripper.pack()
 save.pack()
 clear.pack()
 use_aruco.pack()
@@ -404,4 +389,4 @@ j6_n.pack(in_=top, side=LEFT)
 j6_p.pack(in_=top, side=LEFT)
 
 top.mainloop()
-vel_ctrl.disable_velocity_mode()
+client.stop_egm()
