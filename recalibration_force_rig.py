@@ -40,28 +40,30 @@ controller_params = {
     "unload_speed": 1.0, # Unit mm/sec
     'settling_time': 0.2, # Unit: sec
     "lookahead_time": 0.132, # Unit: sec, 0.02
-    "jogging_speed": 200, # Unit: mm/sec
-    "jogging_acc": 60, # Unit: mm/sec^2
+    "jogging_speed": 50, # Unit: mm/sec
+    "jogging_acc": 10, # Unit: mm/sec^2
     'force_filter_alpha': 0.9 # force low pass filter alpha
     }
 
-ipad_pose=np.loadtxt('config/ipad_pose.csv',delimiter=',')
-# ipad_pose=np.loadtxt('config/test_ipad_pose.csv',delimiter=',')
-paper_size=np.loadtxt('config/paper_size.csv',delimiter=',')
-R_pencil=ipad_pose[:3,:3]@Ry(np.pi)
+rig_pose=np.loadtxt('config/rig_pose_raw.csv',delimiter=',')
 
-mctrl=MotionController(robot,ipad_pose,H_pentip2ati,controller_params,TIMESTEP,FORCE_PROTECTION=5,RR_ati_cli=RR_ati_cli,abb_robot_ip=abb_robot_ip)
+R_pencil=rig_pose[:3,:3]@Ry(np.pi)
 
-corners_offset=np.array([[-1,1,0],[1,1,0],[1,-1,0],[-1,-1,0]])*1*np.array([paper_size[0],paper_size[1],0])/2
-corners=np.dot(ipad_pose[:3,:3],corners_offset.T).T+np.tile(ipad_pose[:3,-1],(4,1))
+mctrl=MotionController(robot,rig_pose,H_pentip2ati,controller_params,TIMESTEP,FORCE_PROTECTION=3,RR_ati_cli=RR_ati_cli,abb_robot_ip=abb_robot_ip)
+
+corners_offset=np.array([[],[],[],[]])
+
+
+
+corners=np.dot(rig_pose[:3,:3],corners_offset.T).T+np.tile(rig_pose[:3,-1],(4,1))
 
 ###loop four corners to get precise position base on force feedback
 corners_adjusted=[]
 f_d=0.75	#10N push down
 mctrl.start_egm()
 for corner in corners:
-	corner_top=corner+20*ipad_pose[:3,-2]
-	corner_top_safe=corner+50*ipad_pose[:3,-2]
+	corner_top=corner+20*rig_pose[:3,-2]
+	corner_top_safe=corner+50*rig_pose[:3,-2]
 	print(corner_top)
 	print(corner_top_safe)
 	input("Move to corner")
@@ -81,21 +83,19 @@ for corner in corners:
 	print("Current force reading:",mctrl.ft_reading)
 	input("Start pushing")
 
-	qdot=np.linalg.pinv(robot.jacobian(q_corner_top))@np.hstack((np.zeros(3),-ipad_pose[:3,-2]))		#motion direction
-	K=0.02
-	q_cur=copy.deepcopy(q_corner_top)
-	f_cur=0
 	mctrl.force_load_z(f_d)
-	print(ft_reading,f_cur)
+	for i in range(100): # making sure to get the latest joint position
+		q_cur = mctrl.read_position()
 	corners_adjusted.append(robot.fwd(q_cur).p)
 
-	jog_joint_position_cmd(q_corner_top_safe,v=0.2)
+	mctrl.jog_joint_position_cmd(q_corner_top_safe,v=0.2)
 
 mctrl.stop_egm()
 
 
 ###UPDATE IPAD POSE based on new corners
 p_all=np.array(corners_adjusted)
+np.savetxt('config/corners_adjusted.csv', p_all, delimiter=',')
 #identify the center point and the plane
 center=np.mean(p_all,axis=0)
 pca = PCA()
@@ -108,5 +108,8 @@ if R_temp[:,-1]@R_pencil[:,-1]>0:
 
 R_temp[:,1]=np.cross(R_temp[:,2],R_temp[:,0])
 
-np.savetxt('config/ipad_pose.csv', H_from_RT(R_temp,center), delimiter=',')
+print("New rig R:", R_temp)
+print("New rig center:", center)
+# np.savetxt()
+np.savetxt('config/rig_pose.csv', H_from_RT(R_temp,center), delimiter=',')
 		
