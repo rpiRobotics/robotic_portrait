@@ -31,7 +31,7 @@ def adjoint_map(T):
     return np.vstack((np.hstack((R,np.zeros((3,3)))),np.hstack((hat(p)@R,R))))
 
 class MotionController(object):
-    def __init__(self,robot,ipad_pose,H_pentip2ati,controller_param,TIMESTEP,USE_RR_ROBOT=True,
+    def __init__(self,robot,ipad_pose,H_pentip2ati,controller_param,TIMESTEP,USE_RR_ROBOT=False,
                  RR_robot_sub=None,FORCE_PROTECTION=5,RR_ati_cli=None,simulation=False,abb_robot_ip=''):
         
         # define robots
