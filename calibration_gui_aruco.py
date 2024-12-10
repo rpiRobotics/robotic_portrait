@@ -220,7 +220,8 @@ def save_p_aruco(filename):
     print(np.degrees(euler_angle)[:,0])
     R = rpy2R(euler_angle[0])
     T_ipad_cam = Transform(R, center)
-    T_cam_robot = robot_cam.fwd(vel_ctrl.joint_position())
+    this_q=read_position()
+    T_cam_robot = robot_cam.fwd(this_q)
     T_ipad_robot = T_cam_robot*T_ipad_cam
     R = T_ipad_robot.R
     R = R@rot(np.array([0,0,1]), np.pi/2)
