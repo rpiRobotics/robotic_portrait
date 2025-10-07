@@ -123,10 +123,23 @@ class MotionController(object):
         self.client.stop_egm()
     
     def read_position(self):
+        iter_max = 20
         if self.USE_RR_ROBOT:
             return self.robot_state.InValue.joint_position
         else:
-            res, state = self.egm.receive_from_robot(timeout=0.1)
+            for i in range(iter_max):
+                res, state = self.egm.receive_from_robot(timeout=0.1)
+                if not res:
+                    # raise Exception("Robot communication lost")
+                    print("Robot communication lost")
+                    # time.sleep(0.1)
+                    self.stop_egm()
+                    time.sleep(0.5)
+                    # self.egm = EGM()
+                    self.start_egm()
+                    # self.egm = EGM()
+                else:
+                    break
             if not res:
                 raise Exception("Robot communication lost")
             return np.radians(state.joint_angles)
@@ -219,10 +232,14 @@ class MotionController(object):
         #arc-like trajectory to next segment
         p_start=pose_start.p+h_offset*self.ipad_pose[:3,-2]
         q_start=self.robot.inv(p_start,pose_start.R,js_start)[0]
-        pose_cur=self.robot.fwd(self.read_position())
+        q_cur = self.read_position()
+        pose_cur=self.robot.fwd(q_cur)
         p_mid=(pose_start.p+pose_cur.p)/2+h_offset*self.ipad_pose[:3,-2]
         q_mid=self.robot.inv(p_mid,pose_start.R,js_start)[0]
-        self.trajectory_position_cmd(np.vstack((self.read_position(),q_mid,q_start)),v=lin_vel)
+        time.sleep(0.5)
+        # self.trajectory_position_cmd(np.vstack((q_cur,q_mid,q_start)),v=lin_vel)
+        self.jog_joint_position_cmd(q_mid,v=lin_vel)
+        self.jog_joint_position_cmd(q_start,v=lin_vel)
         p_start=pose_start.p+h_offset_low*self.ipad_pose[:3,-2]
         q_start=self.robot.inv(p_start,pose_start.R,js_start)[0]
         self.jog_joint_position_cmd(q_start,v=lin_vel,wait_time=0.5)
@@ -253,6 +270,7 @@ class MotionController(object):
         T_button_robot=self.ipad_pose_T*Transform(R_button,p_button+np.array([0,0,1]))
         q_button_offset=self.robot.inv(T_button_offset_robot.p,T_button_offset_robot.R,q_seed)[0]
         q_button=self.robot.inv(T_button_robot.p,T_button_robot.R,q_seed)[0]
+        time.sleep(0.1)
         self.trajectory_position_cmd(np.vstack((self.read_position(),q_button_offset,q_button)),v=lin_vel) # move about the button
         # self.jog_joint_position_cmd(q_button_offset,v=lin_vel) 
         # self.jog_joint_position_cmd(q_button,v=lin_vel) # move about the button
@@ -434,7 +452,7 @@ class MotionController(object):
         traj_q, traj_xy, traj_fz, time_bp=self.trajectory_generate(q_all,np.zeros(len(q_all)),np.zeros(len(q_all)),lin_vel=v,lin_acc=self.params["jogging_acc"])
 
         for i in range(len(traj_q)):
-            self.read_position()
+            q_cur = self.read_position()
             self.position_cmd(traj_q[i])
             if self.USE_RR_ROBOT:
                 time.sleep(self.TIMESTEP)
@@ -480,7 +498,9 @@ class MotionController(object):
         traj_q, traj_xy, traj_fz, time_bp=self.trajectory_generate(q_all,np.zeros(len(q_all)),np.zeros(len(q_all)),lin_vel=v,lin_acc=self.params["jogging_acc"])
 
         for i in range(len(traj_q)):
-            self.read_position()
+            # self.read_position()
+            q_cur = self.read_position()
+            # time.sleep(0.004)
             self.position_cmd(traj_q[i])
             if self.USE_RR_ROBOT:
                 time.sleep(self.TIMESTEP)

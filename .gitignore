@@ -402,3 +402,7 @@ record*
 ui/credentiala/*
 temp_data/*
 *.pkl
+
+wen_photo/*
+page_photo/*
+temp_data/*
