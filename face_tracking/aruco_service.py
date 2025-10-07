@@ -149,7 +149,6 @@ class ArucoDetector(object):
             if self.SHOW_VIZ:
                 cv2.imshow("Image", cv2.resize(image_viz, (450,450)))
                 cv2.waitKey(1)
-                print(t_list[i],R_list[i])
             # 
             time.sleep(1/self.rate)
         

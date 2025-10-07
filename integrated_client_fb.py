@@ -79,7 +79,7 @@ pixel2mm=np.loadtxt('config/pixel2mm.csv',delimiter=',') # pixel to mm ratio
 pixel2force=np.loadtxt('config/pixel2force.csv',delimiter=',') # pixel to force ratio
 ipad_pose=np.loadtxt('config/ipad_pose.csv',delimiter=',') # ipad pose
 H_pentip2ati=np.loadtxt('config/pentip2ati.csv',delimiter=',') # FT sensor info
-p_button=np.array([129, -102, 0]) # button position, in ipad frame
+p_button=np.array([140, -82, 0]) # button position, in ipad frame
 R_pencil=Ry(np.pi) # pencil orientation, ipad frame
 R_pencil_base=ipad_pose[:3,:3]@R_pencil # pencil orientation, world frame
 q_waiting = np.radians([0,-30,25,0,40,0]) # waiting joint position
@@ -92,7 +92,7 @@ face_track_y = np.array([0,0,1])
 target_size=[1200,800]
 smallest_lam = 20 # smallest path length (unit: mm)
 max_stroke_w = 10 # max stroke width
-min_stroke_w = 7 # min stroke width
+min_stroke_w = 6 # min stroke width
 pixelforce_ratio_calib = 1.2 # pixel to force ratio calibration
 ######## Controller parameters ###
 controller_params = {
@@ -108,7 +108,7 @@ controller_params = {
     "lookahead_time": 0.132, # Unit: sec, 0.02
     "jogging_speed": 400, # Unit: mm/sec
     "jogging_acc": 20, # Unit: mm/sec^2
-    'force_filter_alpha': 0.9 # force low pass filter alpha
+    'force_filter_alpha': 0.95 # force low pass filter alpha
     }
 ### Define the motion controller
 mctrl=MotionController(robot,ipad_pose,H_pentip2ati,controller_params,TIMESTEP,USE_RR_ROBOT=USE_RR_ROBOT,

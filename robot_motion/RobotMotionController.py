@@ -131,7 +131,7 @@ class MotionController(object):
                 res, state = self.egm.receive_from_robot(timeout=0.1)
                 if not res:
                     # raise Exception("Robot communication lost")
-                    print("Robot communication lost")
+                    print("Robot communication lost. Restarting EGM...")
                     # time.sleep(0.1)
                     self.stop_egm()
                     time.sleep(0.5)
@@ -267,7 +267,7 @@ class MotionController(object):
             q_seed=self.read_position() 
         # jog to button point
         T_button_offset_robot=self.ipad_pose_T*Transform(R_button,p_button+np.array([0,0,h_offset]))
-        T_button_robot=self.ipad_pose_T*Transform(R_button,p_button+np.array([0,0,1]))
+        T_button_robot=self.ipad_pose_T*Transform(R_button,p_button+np.array([0,0,5]))
         q_button_offset=self.robot.inv(T_button_offset_robot.p,T_button_offset_robot.R,q_seed)[0]
         q_button=self.robot.inv(T_button_robot.p,T_button_robot.R,q_seed)[0]
         time.sleep(0.1)
@@ -441,7 +441,8 @@ class MotionController(object):
     
     def jog_joint_position_cmd(self,q,v=0.4,wait_time=0):
 
-        q_start=self.read_position()
+        for i in range(125):
+            q_start=self.read_position()
         # total_time=np.linalg.norm(q-q_start)/v
 
         q_all = np.linspace(q_start,q,num=100)
@@ -462,6 +463,8 @@ class MotionController(object):
         while time.time()-start_time<wait_time:
             self.read_position()
             self.position_cmd(q)
+            if self.USE_RR_ROBOT:
+                time.sleep(self.TIMESTEP)
     
     def jog_joint_position_cmd_nowait(self,q,v=0.4,wait_time=0):
 
